@@ -46,6 +46,7 @@ from .base_detector import AbstractDetector
 from detectors import DETECTOR
 from networks import BACKBONE
 from loss import LOSSFUNC
+from networks.msp import *
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ class UCFDetector(AbstractDetector):
             hidden_dim=self.half_fingerprint_dim, 
             out_f=self.half_fingerprint_dim
         )
+
+        self.msp = OCA2(inplanes=512,planes=512, height=256)
         
     def build_backbone(self, config):
         # prepare the backbone
@@ -129,18 +132,20 @@ class UCFDetector(AbstractDetector):
         return loss_func
     
     def features(self, data_dict: dict) -> torch.tensor:
-        cat_data = data_dict['image']
+        cat_data = data_dict['image']# torch.Size([32, 3, 256, 256])
         # encoder
-        f_all = self.encoder_f.features(cat_data)
-        c_all = self.encoder_c.features(cat_data)
+        f_all = self.encoder_f.features(cat_data)# torch.Size([32, 512, 8, 8])
+        c_all = self.encoder_c.features(cat_data)# torch.Size([32, 512, 8, 8])
+        f_all = self.msp(f_all)
+        c_all = self.msp(c_all)
         feat_dict = {'forgery': f_all, 'content': c_all}
         return feat_dict
 
     def classifier(self, features: torch.tensor) -> torch.tensor:
         # classification, multi-task
         # split the features into the specific and common forgery
-        f_spe = self.block_spe(features)
-        f_share = self.block_sha(features)
+        f_spe = self.block_spe(features)# torch.Size([32, 256, 8, 8])
+        f_share = self.block_sha(features)# torch.Size([32, 256, 8, 8])
         return f_spe, f_share
     
     def get_losses(self, data_dict: dict, pred_dict: dict) -> dict:
@@ -236,71 +241,71 @@ class UCFDetector(AbstractDetector):
 
         if inference:
             # inference only consider share loss
-            out_sha, sha_feat = self.head_sha(f_share)
-            out_spe, spe_feat = self.head_spe(f_spe)
-            prob_sha = torch.softmax(out_sha, dim=1)[:, 1]
+            out_sha, sha_feat = self.head_sha(f_share)# torch.Size([32, 2]) torch.Size([32, 256])
+            out_spe, spe_feat = self.head_spe(f_spe)# torch.Size([32, 5]) torch.Size([32, 256])
+            prob_sha = torch.softmax(out_sha, dim=1)[:, 1]# torch.Size([32])
             self.prob.append(
                 prob_sha
                 .detach()
                 .squeeze()
                 .cpu()
                 .numpy()
-            )
+            )# self.prob为列表，功能是追加结果到列表中。print(self.prob.append)==<built-in method append of list object at 0x7f5de8c47740>
             self.label.append(
-                data_dict['label']
+                data_dict['label']# torch.Size([32])
                 .detach()
                 .squeeze()
                 .cpu()
                 .numpy()
-            )
+            )# print(self.label.append)==<built-in method append of list object at 0x7f5de8bca400>
             # deal with acc
-            _, prediction_class = torch.max(out_sha, 1)
-            common_label = (data_dict['label'] >= 1)
-            correct = (prediction_class == common_label).sum().item()
-            self.correct += correct
-            self.total += data_dict['label'].size(0)
+            _, prediction_class = torch.max(out_sha, 1)# torch.Size([32]) torch.Size([32])
+            common_label = (data_dict['label'] >= 1)# torch.Size([32])
+            correct = (prediction_class == common_label).sum().item()# print(correct)==31
+            self.correct += correct# self.correct = self.correct + correct
+            self.total += data_dict['label'].size(0)# print(self.total)==32
 
             pred_dict = {'cls': out_sha, 'prob': prob_sha, 'feat': sha_feat}
             return  pred_dict
 
-        bs = f_share.size(0)
+        bs = f_share.size(0)# <class 'int'> bs==32
         # using idx aug in the training mode
-        aug_idx = random.random()
+        aug_idx = random.random()# <class 'float'> aug_idx==0.5636620281419568
         if aug_idx < 0.7:
             # real
-            idx_list = list(range(0, bs//2))
-            random.shuffle(idx_list)
-            f_share[0: bs//2] = f_share[idx_list]
+            idx_list = list(range(0, bs//2))# <class 'list'> idx_list==[5, 0, 13, 9, 2, 12, 4, 15, 10, 14, 3, 6, 11, 7, 1, 8]
+            random.shuffle(idx_list)# 随机打乱输入进去的数字
+            f_share[0: bs//2] = f_share[idx_list]# torch.Size([16, 256, 8, 8]) 
             # fake
             idx_list = list(range(bs//2, bs))
             random.shuffle(idx_list)
             f_share[bs//2: bs] = f_share[idx_list]
         
         # concat spe and share to obtain new_f_all
-        f_all = torch.cat((f_spe, f_share), dim=1)
+        f_all = torch.cat((f_spe, f_share), dim=1)# torch.Size([32, 512, 8, 8])
         
         # reconstruction loss
-        f2, f1 = f_all.chunk(2, dim=0)
-        c2, c1 = content_features.chunk(2, dim=0)
+        f2, f1 = f_all.chunk(2, dim=0)# torch.Size([16, 512, 8, 8]) 功能是将张量f_all尽可能平均分成2份
+        c2, c1 = content_features.chunk(2, dim=0)# torch.Size([16, 512, 8, 8]) 将张量content_features尽可能平均分成两份
 
         # ==== self reconstruction ==== #
         # f1 + c1 -> f11, f11 + c1 -> near~I1
-        self_reconstruction_image_1 = self.con_gan(f1, c1)
+        self_reconstruction_image_1 = self.con_gan(f1, c1)# torch.Size([16, 3, 256, 256])
 
         # f2 + c2 -> f2, f2 + c2 -> near~I2
-        self_reconstruction_image_2 = self.con_gan(f2, c2)
+        self_reconstruction_image_2 = self.con_gan(f2, c2)# torch.Size([16, 3, 256, 256])
 
         # ==== cross combine ==== #
-        reconstruction_image_1 = self.con_gan(f1, c2)
-        reconstruction_image_2 = self.con_gan(f2, c1)
+        reconstruction_image_1 = self.con_gan(f1, c2)# torch.Size([16, 3, 256, 256])
+        reconstruction_image_2 = self.con_gan(f2, c1)# torch.Size([16, 3, 256, 256])
 
         # head for spe and sha
-        out_spe, spe_feat = self.head_spe(f_spe)
-        out_sha, sha_feat = self.head_sha(f_share)
+        out_spe, spe_feat = self.head_spe(f_spe)# torch.Size([32, 5]) torch.Size([32, 256])
+        out_sha, sha_feat = self.head_sha(f_share)# torch.Size([32, 2]) torch.Size([32, 256])
 
         # get the probability of the pred
-        prob_sha = torch.softmax(out_sha, dim=1)[:, 1]
-        prob_spe = torch.softmax(out_spe, dim=1)[:, 1]
+        prob_sha = torch.softmax(out_sha, dim=1)[:, 1]# torch.Size([32])
+        prob_spe = torch.softmax(out_spe, dim=1)[:, 1]# torch.Size([32])
 
         # build the prediction dict for each output
         pred_dict = {
