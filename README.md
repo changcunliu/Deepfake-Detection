@@ -6,7 +6,7 @@
 > OUR LATEST WORK:  We have proposed a network model aimed at addressing the issue of high-risk transactions involving deepfake-generated faces in facial payment systems.  We will soon release all the codes implemented by the DeepfakeBench codebase.
 
 
-Training 
+### Training 
 
 <a href="#top">[Back to top]</a>
 
@@ -41,7 +41,8 @@ python training/train.py \
 --no-save_feat
 ```
 
-Test
+### Test
+
 If you want to produce the results, you can use the the [`test.py`](./training/test.py) code for evaluation. Here is an example:
 
 ```
