@@ -18,7 +18,7 @@ from detectors import DETECTOR
 from networks import BACKBONE
 from loss import LOSSFUNC
 from networks.EffConv import *
-from networks.csc import *
+from networks.CSC import *
 from networks.FDD import *
 import matplotlib.pyplot as plt
 from PIL import Image
