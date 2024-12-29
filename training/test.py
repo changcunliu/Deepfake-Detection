@@ -23,12 +23,10 @@ from dataset.abstract_dataset import DeepfakeAbstractBaseDataset
 from dataset.ff_blend import FFBlendDataset
 from dataset.fwa_blend import FWABlendDataset
 from dataset.pair_dataset import pairDataset
-
 from trainer.trainer import Trainer
 from detectors import DETECTOR
 from metrics.base_metrics_class import Recorder
 from collections import defaultdict
-
 import argparse
 from logger import create_logger
 
