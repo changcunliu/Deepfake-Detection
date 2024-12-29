@@ -17,14 +17,15 @@ from .base_detector import AbstractDetector
 from detectors import DETECTOR
 from networks import BACKBONE
 from loss import LOSSFUNC
-from networks.msp import *
-from networks.rcm import *
-from networks.wtfd import *
+from networks.EffConv import *
+from networks.csc import *
+from networks.FDD import *
 import matplotlib.pyplot as plt
 from PIL import Image
 
 
 logger = logging.getLogger(__name__)
+
 
 def vis_norm(var):
     var = (var - np.min(var)) / (np.max(var) - np.min(var))
@@ -80,9 +81,9 @@ class UCFDetector(AbstractDetector):
             out_f=self.half_fingerprint_dim
         )
 
-        self.msp = PConv(dim=256, n_div=4)
-        self.rcm = RCM(dim=512)
-        self.wtfd = WTFD(256,256)
+        self.EffConv = PConv(dim=256, n_div=4)
+        self.csc = CSC(dim=512)
+        self.fdd = FDD(256,256)
         self.i = 0
         
     def build_backbone(self, config):
@@ -119,22 +120,22 @@ class UCFDetector(AbstractDetector):
         cat_data = data_dict['image']
         f_all = self.encoder_f.features(cat_data)
         c_all = self.encoder_c.features(cat_data)
-        f_all = self.rcm(f_all)
-        c_all = self.rcm(c_all)
+        f_all = self.csc(f_all)
+        c_all = self.csc(c_all)
         feat_dict = {'forgery': f_all, 'content': c_all}
         return feat_dict
 
     def classifier(self, features: torch.tensor) -> torch.tensor:
         f_spe = self.block_spe(features)
         f_share = self.block_sha(features)
-        f_spel,f_speh = self.wtfd(f_spe)
-        f_spel = self.msp(f_spel)
-        f_speh = self.msp(f_speh)
+        f_spel,f_speh = self.fdd(f_spe)
+        f_spel = self.EffConv(f_spel)
+        f_speh = self.EffConv(f_speh)
         f_spe = f_spel + f_speh
 
-        f_sharel,f_shareh = self.wtfd(f_share)
-        f_sharel = self.msp(f_sharel)
-        f_shareh = self.msp(f_shareh)
+        f_sharel,f_shareh = self.fdd(f_share)
+        f_sharel = self.EffConv(f_sharel)
+        f_shareh = self.EffConv(f_shareh)
         f_share = f_sharel +f_shareh
         return f_spe, f_share
     
@@ -214,7 +215,6 @@ class UCFDetector(AbstractDetector):
     
 
     def forward(self, data_dict: dict, inference=False) -> dict:
-        original_images = denormalize(data_dict['image'], mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         original_images = torch.clamp(original_images, 0, 1)
 
         features = self.features(data_dict)
@@ -237,20 +237,9 @@ class UCFDetector(AbstractDetector):
         else:
             original_indices = list(range(bs))  
 
-        y2= data_dict['image'].clone()
-        image = y2[0]
-        image = image.permute(1, 2, 0)
-        image = image.cpu().numpy()
-        mean = [0.5, 0.5, 0.5]
-        std = [0.5, 0.5, 0.5]
-        y2 = denormalize(y2, mean, std)
-        y2 = torch.clamp(y2, 0, 1)
-        image = y2[0].permute(1, 2, 0).cpu().numpy()
-
         features= self.features(data_dict)
         forgery_features, content_features = features['forgery'], features['content']
         f_spe, f_share = self.classifier(forgery_features)
-        y1 =f_share.clone()
 
         if inference:
             out_sha, sha_feat = self.head_sha(f_share)
@@ -277,31 +266,6 @@ class UCFDetector(AbstractDetector):
             self.total += data_dict['label'].size(0)
 
             pred_dict = {'cls': out_sha, 'prob': prob_sha, 'feat': sha_feat}
-            save_dir="/home/changcun/my/DeepfakeBench/v1/1"
-            i=self.i
-            name = f"image_{i}.jpg"
-            os.makedirs(save_dir, exist_ok=True)
-
-            map = y1.mean(dim=1).mean(dim=0).detach().cpu().numpy()
-            map[map < 0] = 0
-            map = Image.fromarray(map).resize((256, 256))
-
-            figure, axes = plt.subplots()
-            axes.imshow(image, cmap="jet")
-            axes.imshow(vis_norm(map), alpha=0.6, cmap="jet")
-
-            plt.axis("off")
-
-            figure.set_size_inches(256 / 300, 256 / 300)
-            figure.set_size_inches(1024 / 300, 1024 / 300)
-            plt.gca().xaxis.set_major_locator(plt.NullLocator())
-            plt.gca().yaxis.set_major_locator(plt.NullLocator())
-            plt.subplots_adjust(top=1, bottom=0, left=0, right=1, hspace=0, wspace=0)
-            plt.margins(0, 0)
-
-            plt.savefig(os.path.join(save_dir,name), dpi=300)
-            plt.close()
-            self.i= self.i+1
             return  pred_dict
 
         bs = f_share.size(0)

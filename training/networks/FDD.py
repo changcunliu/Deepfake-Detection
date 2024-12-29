@@ -3,9 +3,9 @@ import torch.nn as nn
 from pytorch_wavelets import DWTForward
 
 
-class WTFD(nn.Module): 
+class FDD(nn.Module): 
     def __init__(self, in_ch, out_ch):
-        super(WTFD, self).__init__()
+        super(FDD, self).__init__()
         self.wt = DWTForward(J=1, mode='zero', wave='haar')
         self.conv_bn_relu = nn.Sequential(
                                     nn.Conv2d(in_ch*3, in_ch, kernel_size=1, stride=1),
@@ -35,9 +35,9 @@ class WTFD(nn.Module):
         return yL,yH
 
 
-class WTFDown(nn.Module):
+class FDDown(nn.Module):
     def __init__(self, in_ch, out_ch):
-        super(WTFDown, self).__init__()
+        super(FDDown, self).__init__()
         self.wt = DWTForward(J=1, mode='zero', wave='haar')
         self.conv_bn_relu = nn.Sequential(
                                     nn.Conv2d(in_ch*3, in_ch, kernel_size=1, stride=1),
@@ -68,14 +68,14 @@ class WTFDown(nn.Module):
 
 if __name__ == "__main__":
     input = torch.randn(1,32, 64, 64)
-    WTFD =  WTFD(32,32)
-    output_L,output_H = WTFD(input) 
+    FDD =  FDD(32,32)
+    output_L,output_H = FDD(input) 
     print(f"input  shape: {input.shape}")
     print(f"output_L shape: {output_L.shape}")
     print(f"output_H shape: {output_H.shape}")
 
     print('-----------')
-    WTFDown = WTFDown(32,64)
-    output = WTFDown(input)
+    FDDown = FDDown(32,64)
+    output = FDDown(input)
     print(f"input  shape: {input.shape}")
     print(f"output shape: {output.shape}")

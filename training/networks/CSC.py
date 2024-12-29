@@ -61,7 +61,7 @@ class RCA(nn.Module):
         return out
 
 
-class RCM(nn.Module):
+class CSC(nn.Module):
     def __init__(
             self,
             dim,
@@ -96,7 +96,7 @@ class RCM(nn.Module):
 
 if __name__ == '__main__':
     input = torch.randn(1, 512, 8, 8) 
-    rcm  = RCM(dim=512)
-    output = rcm(input)  
+    csc  = CSC(dim=512)
+    output = csc(input)  
     print(input.shape)
     print(output.shape)
