@@ -4,9 +4,6 @@ from abc import ABC, abstractmethod
 
 
 class BaseTrainer(ABC):
-    """
-    """
-
     def __init__(
         self, 
         config, 

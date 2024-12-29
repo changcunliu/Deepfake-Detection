@@ -1,29 +1,3 @@
-'''
-# author: Zhiyuan Yan
-# email: zhiyuanyan@link.cuhk.edu.cn
-# date: 2023-0706
-# description: Class for the UCFDetector
-
-Functions in the Class are summarized as:
-1. __init__: Initialization
-2. build_backbone: Backbone-building
-3. build_loss: Loss-function-building
-4. features: Feature-extraction
-5. classifier: Classification
-6. get_losses: Loss-computation
-7. get_train_metrics: Training-metrics-computation
-8. get_test_metrics: Testing-metrics-computation
-9. forward: Forward-propagation
-
-Reference:
-@article{yan2023ucf,
-  title={UCF: Uncovering Common Features for Generalizable Deepfake Detection},
-  author={Yan, Zhiyuan and Zhang, Yong and Fan, Yanbo and Wu, Baoyuan},
-  journal={arXiv preprint arXiv:2304.13949},
-  year={2023}
-}
-'''
-
 import os
 import datetime
 import logging
@@ -32,24 +6,36 @@ import numpy as np
 from sklearn import metrics
 from typing import Union
 from collections import defaultdict
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn import DataParallel
 from torch.utils.tensorboard import SummaryWriter
-
 from metrics.base_metrics_class import calculate_metrics_for_train
-
 from .base_detector import AbstractDetector
 from detectors import DETECTOR
 from networks import BACKBONE
 from loss import LOSSFUNC
 from networks.msp import *
+from networks.rcm import *
+from networks.wtfd import *
+import matplotlib.pyplot as plt
+from PIL import Image
+
 
 logger = logging.getLogger(__name__)
 
+def vis_norm(var):
+    var = (var - np.min(var)) / (np.max(var) - np.min(var))
+    var = var * 255
+    return var
+
+def denormalize(tensor, mean, std):
+        mean = torch.tensor(mean).view(-1, 1, 1).to(tensor.device)
+        std = torch.tensor(std).view(-1, 1, 1).to(tensor.device)
+        return tensor * std + mean
+    
 @DETECTOR.register_module(module_name='ucf')
 class UCFDetector(AbstractDetector):
     def __init__(self, config):
@@ -66,16 +52,13 @@ class UCFDetector(AbstractDetector):
         self.prob, self.label = [], []
         self.correct, self.total = 0, 0
         
-        # basic function
         self.lr = nn.LeakyReLU(inplace=True)
         self.do = nn.Dropout(0.2)
         self.pool = nn.AdaptiveAvgPool2d(1)
 
-        # conditional gan
         self.con_gan = Conditional_UNet()
 
-        # head
-        specific_task_number = len(config['train_dataset']) + 1  # default: 5 in FF++
+        specific_task_number = len(config['train_dataset']) + 1  
         self.head_spe = Head(
             in_f=self.half_fingerprint_dim, 
             hidden_dim=self.encoder_feat_dim,
@@ -97,14 +80,15 @@ class UCFDetector(AbstractDetector):
             out_f=self.half_fingerprint_dim
         )
 
-        self.msp = OCA2(inplanes=512,planes=512, height=256)
+        self.msp = PConv(dim=256, n_div=4)
+        self.rcm = RCM(dim=512)
+        self.wtfd = WTFD(256,256)
+        self.i = 0
         
     def build_backbone(self, config):
-        # prepare the backbone
         backbone_class = BACKBONE[config['backbone_name']]
         model_config = config['backbone_config']
         backbone = backbone_class(model_config)
-        # if donot load the pretrained weights, fail to get good results
         state_dict = torch.load(config['pretrained'])
         for name, weights in state_dict.items():
             if 'pointwise' in name:
@@ -132,42 +116,44 @@ class UCFDetector(AbstractDetector):
         return loss_func
     
     def features(self, data_dict: dict) -> torch.tensor:
-        cat_data = data_dict['image']# torch.Size([32, 3, 256, 256])
-        # encoder
-        f_all = self.encoder_f.features(cat_data)# torch.Size([32, 512, 8, 8])
-        c_all = self.encoder_c.features(cat_data)# torch.Size([32, 512, 8, 8])
-        f_all = self.msp(f_all)
-        c_all = self.msp(c_all)
+        cat_data = data_dict['image']
+        f_all = self.encoder_f.features(cat_data)
+        c_all = self.encoder_c.features(cat_data)
+        f_all = self.rcm(f_all)
+        c_all = self.rcm(c_all)
         feat_dict = {'forgery': f_all, 'content': c_all}
         return feat_dict
 
     def classifier(self, features: torch.tensor) -> torch.tensor:
-        # classification, multi-task
-        # split the features into the specific and common forgery
-        f_spe = self.block_spe(features)# torch.Size([32, 256, 8, 8])
-        f_share = self.block_sha(features)# torch.Size([32, 256, 8, 8])
+        f_spe = self.block_spe(features)
+        f_share = self.block_sha(features)
+        f_spel,f_speh = self.wtfd(f_spe)
+        f_spel = self.msp(f_spel)
+        f_speh = self.msp(f_speh)
+        f_spe = f_spel + f_speh
+
+        f_sharel,f_shareh = self.wtfd(f_share)
+        f_sharel = self.msp(f_sharel)
+        f_shareh = self.msp(f_shareh)
+        f_share = f_sharel +f_shareh
         return f_spe, f_share
     
     def get_losses(self, data_dict: dict, pred_dict: dict) -> dict:
         if 'label_spe' in data_dict and 'recontruction_imgs' in pred_dict:
             return self.get_train_losses(data_dict, pred_dict)
-        else:  # test mode
+        else: 
             return self.get_test_losses(data_dict, pred_dict)
 
     def get_train_losses(self, data_dict: dict, pred_dict: dict) -> dict:
-        # get combined, real, fake imgs
         cat_data = data_dict['image']
         real_img, fake_img = cat_data.chunk(2, dim=0)
-        # get the reconstruction imgs
         reconstruction_image_1, \
         reconstruction_image_2, \
         self_reconstruction_image_1, \
         self_reconstruction_image_2 \
             = pred_dict['recontruction_imgs']
-        # get label
         label = data_dict['label']
         label_spe = data_dict['label_spe']
-        # get pred
         pred = pred_dict['cls']
         pred_spe = pred_dict['cls_spe']
 
@@ -203,111 +189,149 @@ class UCFDetector(AbstractDetector):
         return loss_dict
 
     def get_test_losses(self, data_dict: dict, pred_dict: dict) -> dict:
-        # get label
         label = data_dict['label']
-        # get pred
         pred = pred_dict['cls']
-        # for test mode, only classification loss for common features
         loss = self.loss_func['cls'](pred, label)
         loss_dict = {'common': loss}
         return loss_dict
 
     def get_train_metrics(self, data_dict: dict, pred_dict: dict) -> dict:
         def get_accracy(label, output):
-            _, prediction = torch.max(output, 1)    # argmax
+            _, prediction = torch.max(output, 1)   
             correct = (prediction == label).sum().item()
             accuracy = correct / prediction.size(0)
             return accuracy
-        
-        # get pred and label
+
         label = data_dict['label']
         pred = pred_dict['cls']
         label_spe = data_dict['label_spe']
         pred_spe = pred_dict['cls_spe']
 
-        # compute metrics for batch data
         auc, eer, acc, ap = calculate_metrics_for_train(label.detach(), pred.detach())
         acc_spe = get_accracy(label_spe.detach(), pred_spe.detach())
         metric_batch_dict = {'acc': acc, 'acc_spe': acc_spe, 'auc': auc, 'eer': eer, 'ap': ap}
-        # we dont compute the video-level metrics for training
         return metric_batch_dict
+    
 
     def forward(self, data_dict: dict, inference=False) -> dict:
-        # split the features into the content and forgery
-        features = self.features(data_dict)# <class 'dict'>
-        forgery_features, content_features = features['forgery'], features['content']# torch.Size([32, 512, 8, 8]) torch.Size([32, 512, 8, 8])
-        # get the prediction by classifier (split the common and specific forgery)
-        f_spe, f_share = self.classifier(forgery_features)# torch.Size([32, 256, 8, 8]) torch.Size([32, 256, 8, 8])
+        original_images = denormalize(data_dict['image'], mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        original_images = torch.clamp(original_images, 0, 1)
+
+        features = self.features(data_dict)
+        forgery_features, content_features = features['forgery'], features['content']
+        f_spe, f_share = self.classifier(forgery_features)
+
+        bs = f_share.size(0) 
+        aug_idx = random.random()
+
+        if aug_idx < 0.7:
+            idx_list = list(range(0, bs // 2))
+            random.shuffle(idx_list)
+            f_share[0: bs // 2] = f_share[idx_list]
+
+            idx_list_fake = list(range(bs // 2, bs))
+            random.shuffle(idx_list_fake)
+            f_share[bs // 2: bs] = f_share[idx_list_fake]
+
+            original_indices = idx_list + idx_list_fake  
+        else:
+            original_indices = list(range(bs))  
+
+        y2= data_dict['image'].clone()
+        image = y2[0]
+        image = image.permute(1, 2, 0)
+        image = image.cpu().numpy()
+        mean = [0.5, 0.5, 0.5]
+        std = [0.5, 0.5, 0.5]
+        y2 = denormalize(y2, mean, std)
+        y2 = torch.clamp(y2, 0, 1)
+        image = y2[0].permute(1, 2, 0).cpu().numpy()
+
+        features= self.features(data_dict)
+        forgery_features, content_features = features['forgery'], features['content']
+        f_spe, f_share = self.classifier(forgery_features)
+        y1 =f_share.clone()
 
         if inference:
-            # inference only consider share loss
-            out_sha, sha_feat = self.head_sha(f_share)# torch.Size([32, 2]) torch.Size([32, 256])
-            out_spe, spe_feat = self.head_spe(f_spe)# torch.Size([32, 5]) torch.Size([32, 256])
-            prob_sha = torch.softmax(out_sha, dim=1)[:, 1]# torch.Size([32])
+            out_sha, sha_feat = self.head_sha(f_share)
+            out_spe, spe_feat = self.head_spe(f_spe)
+            prob_sha = torch.softmax(out_sha, dim=1)[:, 1]
             self.prob.append(
                 prob_sha
                 .detach()
                 .squeeze()
                 .cpu()
                 .numpy()
-            )# self.prob为列表，功能是追加结果到列表中。print(self.prob.append)==<built-in method append of list object at 0x7f5de8c47740>
+            )
             self.label.append(
-                data_dict['label']# torch.Size([32])
+                data_dict['label']
                 .detach()
                 .squeeze()
                 .cpu()
                 .numpy()
-            )# print(self.label.append)==<built-in method append of list object at 0x7f5de8bca400>
-            # deal with acc
-            _, prediction_class = torch.max(out_sha, 1)# torch.Size([32]) torch.Size([32])
-            common_label = (data_dict['label'] >= 1)# torch.Size([32])
-            correct = (prediction_class == common_label).sum().item()# print(correct)==31
-            self.correct += correct# self.correct = self.correct + correct
-            self.total += data_dict['label'].size(0)# print(self.total)==32
+            )
+            _, prediction_class = torch.max(out_sha, 1)
+            common_label = (data_dict['label'] >= 1)
+            correct = (prediction_class == common_label).sum().item()
+            self.correct += correct
+            self.total += data_dict['label'].size(0)
 
             pred_dict = {'cls': out_sha, 'prob': prob_sha, 'feat': sha_feat}
+            save_dir="/home/changcun/my/DeepfakeBench/v1/1"
+            i=self.i
+            name = f"image_{i}.jpg"
+            os.makedirs(save_dir, exist_ok=True)
+
+            map = y1.mean(dim=1).mean(dim=0).detach().cpu().numpy()
+            map[map < 0] = 0
+            map = Image.fromarray(map).resize((256, 256))
+
+            figure, axes = plt.subplots()
+            axes.imshow(image, cmap="jet")
+            axes.imshow(vis_norm(map), alpha=0.6, cmap="jet")
+
+            plt.axis("off")
+
+            figure.set_size_inches(256 / 300, 256 / 300)
+            figure.set_size_inches(1024 / 300, 1024 / 300)
+            plt.gca().xaxis.set_major_locator(plt.NullLocator())
+            plt.gca().yaxis.set_major_locator(plt.NullLocator())
+            plt.subplots_adjust(top=1, bottom=0, left=0, right=1, hspace=0, wspace=0)
+            plt.margins(0, 0)
+
+            plt.savefig(os.path.join(save_dir,name), dpi=300)
+            plt.close()
+            self.i= self.i+1
             return  pred_dict
 
-        bs = f_share.size(0)# <class 'int'> bs==32
-        # using idx aug in the training mode
-        aug_idx = random.random()# <class 'float'> aug_idx==0.5636620281419568
+        bs = f_share.size(0)
+        aug_idx = random.random()
         if aug_idx < 0.7:
-            # real
-            idx_list = list(range(0, bs//2))# <class 'list'> idx_list==[5, 0, 13, 9, 2, 12, 4, 15, 10, 14, 3, 6, 11, 7, 1, 8]
-            random.shuffle(idx_list)# 随机打乱输入进去的数字
-            f_share[0: bs//2] = f_share[idx_list]# torch.Size([16, 256, 8, 8]) 
-            # fake
+            idx_list = list(range(0, bs//2))
+            random.shuffle(idx_list)
+            f_share[0: bs//2] = f_share[idx_list]
             idx_list = list(range(bs//2, bs))
             random.shuffle(idx_list)
             f_share[bs//2: bs] = f_share[idx_list]
         
-        # concat spe and share to obtain new_f_all
-        f_all = torch.cat((f_spe, f_share), dim=1)# torch.Size([32, 512, 8, 8])
+        f_all = torch.cat((f_spe, f_share), dim=1)
         
-        # reconstruction loss
-        f2, f1 = f_all.chunk(2, dim=0)# torch.Size([16, 512, 8, 8]) 功能是将张量f_all尽可能平均分成2份
-        c2, c1 = content_features.chunk(2, dim=0)# torch.Size([16, 512, 8, 8]) 将张量content_features尽可能平均分成两份
+        f2, f1 = f_all.chunk(2, dim=0)
+        c2, c1 = content_features.chunk(2, dim=0)
 
-        # ==== self reconstruction ==== #
-        # f1 + c1 -> f11, f11 + c1 -> near~I1
-        self_reconstruction_image_1 = self.con_gan(f1, c1)# torch.Size([16, 3, 256, 256])
+        self_reconstruction_image_1 = self.con_gan(f1, c1)
 
-        # f2 + c2 -> f2, f2 + c2 -> near~I2
-        self_reconstruction_image_2 = self.con_gan(f2, c2)# torch.Size([16, 3, 256, 256])
+        self_reconstruction_image_2 = self.con_gan(f2, c2)
 
-        # ==== cross combine ==== #
-        reconstruction_image_1 = self.con_gan(f1, c2)# torch.Size([16, 3, 256, 256])
-        reconstruction_image_2 = self.con_gan(f2, c1)# torch.Size([16, 3, 256, 256])
+        reconstruction_image_1 = self.con_gan(f1, c2)
+        reconstruction_image_2 = self.con_gan(f2, c1)
 
-        # head for spe and sha
-        out_spe, spe_feat = self.head_spe(f_spe)# torch.Size([32, 5]) torch.Size([32, 256])
-        out_sha, sha_feat = self.head_sha(f_share)# torch.Size([32, 2]) torch.Size([32, 256])
+        out_spe, spe_feat = self.head_spe(f_spe)
+        out_sha, sha_feat = self.head_sha(f_share)
 
-        # get the probability of the pred
-        prob_sha = torch.softmax(out_sha, dim=1)[:, 1]# torch.Size([32])
-        prob_spe = torch.softmax(out_spe, dim=1)[:, 1]# torch.Size([32])
+        prob_sha = torch.softmax(out_sha, dim=1)[:, 1]
+        prob_spe = torch.softmax(out_spe, dim=1)[:, 1]
 
-        # build the prediction dict for each output
         pred_dict = {
             'cls': out_sha, 
             'prob': prob_sha, 
@@ -346,21 +370,19 @@ class AdaIN(nn.Module):
     def __init__(self, eps=1e-5):
         super().__init__()
         self.eps = eps
-        # self.l1 = nn.Linear(num_classes, in_channel*4, bias=True) #bias is good :)
 
     def c_norm(self, x, bs, ch, eps=1e-7):
-        # assert isinstance(x, torch.cuda.FloatTensor)
         x_var = x.var(dim=-1) + eps
         x_std = x_var.sqrt().view(bs, ch, 1, 1)
         x_mean = x.mean(dim=-1).view(bs, ch, 1, 1)
         return x_std, x_mean
 
-    def forward(self, x, y):
-        assert x.size(0)==y.size(0)
+    def forward(self, x, y1):
+        assert x.size(0)==y1.size(0)
         size = x.size()
         bs, ch = size[:2]
         x_ = x.view(bs, ch, -1)
-        y_ = y.reshape(bs, ch, -1)
+        y_ = y1.reshape(bs, ch, -1)
         x_std, x_mean = self.c_norm(x_, bs, ch, eps=self.eps)
         y_std, y_mean = self.c_norm(y_, bs, ch, eps=self.eps)
         out =   ((x - x_mean.expand(size)) / x_std.expand(size)) \
@@ -384,7 +406,6 @@ class Conditional_UNet(nn.Module):
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.maxpool = nn.MaxPool2d(2)
         self.dropout = nn.Dropout(p=0.3)
-        #self.dropout_half = HalfDropout(p=0.3)
         
         self.adain3 = AdaIN()
         self.adain2 = AdaIN()
@@ -397,9 +418,8 @@ class Conditional_UNet(nn.Module):
         self.conv_last = nn.Conv2d(64, 3, 1)
         self.up_last = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True)
         self.activation = nn.Tanh()
-        #self.init_weight() 
         
-    def forward(self, c, x):  # c is the style and x is the content
+    def forward(self, c, x):
         x = self.adain3(x, c)
         x = self.upsample(x)
         x = self.dropout(x)
@@ -409,15 +429,15 @@ class Conditional_UNet(nn.Module):
         c = self.dconv_up3(c)
 
         x = self.adain2(x, c)
-        x = self.upsample(x)        
+        x = self.upsample(x)   
         x = self.dropout(x)     
         x = self.dconv_up2(x)
-        c = self.upsample(c)        
+        c = self.upsample(c)   
         c = self.dropout(c)     
         c = self.dconv_up2(c)
 
         x = self.adain1(x, c)
-        x = self.upsample(x)        
+        x = self.upsample(x)   
         x = self.dropout(x)
         x = self.dconv_up1(x)
         

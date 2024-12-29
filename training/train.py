@@ -1,8 +1,3 @@
-# author: Zhiyuan Yan
-# email: zhiyuanyan@link.cuhk.edu.cn
-# date: 2023-03-30
-# description: training code.
-
 import os
 import argparse
 from os.path import join
@@ -61,7 +56,6 @@ def init_seed(config):
 
 
 def prepare_training_data(config):
-    # Only use the blending dataset class in training
     if 'dataset_type' in config and config['dataset_type'] == 'blend':
         if config['model_name'] == 'facexray':
             train_set = FFBlendDataset(config)
@@ -76,7 +70,7 @@ def prepare_training_data(config):
                 'Only facexray, fwa, sbi, and lsda are currently supported for blending dataset'
             )
     elif 'dataset_type' in config and config['dataset_type'] == 'pair':
-        train_set = pairDataset(config, mode='train')  # Only use the pair dataset class in training
+        train_set = pairDataset(config, mode='train')  
     elif 'dataset_type' in config and config['dataset_type'] == 'iid':
         train_set = IIDDataset(config, mode='train')
     elif 'dataset_type' in config and config['dataset_type'] == 'I2G':
@@ -123,9 +117,8 @@ def prepare_training_data(config):
 
 def prepare_testing_data(config):
     def get_test_data_loader(config, test_name):
-        # update the config dictionary with the specific testing dataset
-        config = config.copy()  # create a copy of config to avoid altering the original one
-        config['test_dataset'] = test_name  # specify the current test dataset
+        config = config.copy()  
+        config['test_dataset'] = test_name  
         if not config.get('dataset_type', None) == 'lrl':
             test_set = DeepfakeAbstractBaseDataset(
                     config=config,
@@ -222,7 +215,6 @@ def choose_metric(config):
 
 
 def main():
-    # parse options and load config
     with open(args.detector_path, 'r') as f:
         config = yaml.safe_load(f)
     with open('/home/changcun/my/DeepfakeBench/training/config/train_config.yaml', 'r') as f:
@@ -234,7 +226,6 @@ def main():
     if config['dry_run']:
         config['nEpochs'] = 0
         config['save_feat']=False
-    # If arguments are provided, they will overwrite the yaml settings
     if args.train_dataset:
         config['train_dataset'] = args.train_dataset
     if args.test_dataset:
@@ -243,7 +234,6 @@ def main():
     config['save_feat'] = args.save_feat
     if config['lmdb']:
         config['dataset_json_folder'] = '/scratch/changcun/dataset/DeepfakeBench/preprocessing/dataset_json'
-    # create logger
     timenow=datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     task_str = f"_{config['task_target']}" if config.get('task_target', None) is not None else ""
     logger_path =  os.path.join(
@@ -254,49 +244,38 @@ def main():
     logger = create_logger(os.path.join(logger_path, 'training.log'))
     logger.info('Save log to {}'.format(logger_path))
     config['ddp']= args.ddp
-    # print configuration
     logger.info("--------------- Configuration ---------------")
     params_string = "Parameters: \n"
     for key, value in config.items():
         params_string += "{}: {}".format(key, value) + "\n"
     logger.info(params_string)
 
-    # init seed
     init_seed(config)
 
-    # set cudnn benchmark if needed
     if config['cudnn']:
         cudnn.benchmark = True
     if config['ddp']:
-        # dist.init_process_group(backend='gloo')
         dist.init_process_group(
             backend='nccl',
             timeout=timedelta(minutes=30)
         )
         logger.addFilter(RankFilter(0))
-    # prepare the training data loader
+
     train_data_loader = prepare_training_data(config)
 
-    # prepare the testing data loader
     test_data_loaders = prepare_testing_data(config)
 
-    # prepare the model (detector)
     model_class = DETECTOR[config['model_name']]
     model = model_class(config)
 
-    # prepare the optimizer
     optimizer = choose_optimizer(model, config)
 
-    # prepare the scheduler
     scheduler = choose_scheduler(config, optimizer)
 
-    # prepare the metric
     metric_scoring = choose_metric(config)
 
-    # prepare the trainer
     trainer = Trainer(config, model, optimizer, scheduler, logger, metric_scoring, time_now=timenow)
 
-    # start training
     for epoch in range(config['start_epoch'], config['nEpochs'] + 1):
         trainer.model.epoch = epoch
         best_metric = trainer.train_epoch(
@@ -307,13 +286,12 @@ def main():
         if best_metric is not None:
             logger.info(f"===> Epoch[{epoch}] end with testing {metric_scoring}: {parse_metric_for_print(best_metric)}!")
     logger.info("Stop Training on best Testing metric {}".format(parse_metric_for_print(best_metric))) 
-    # update
+
     if 'svdd' in config['model_name']:
         model.update_R(epoch)
     if scheduler is not None:
         scheduler.step()
 
-    # close the tensorboard writers
     for writer in trainer.writers.values():
         writer.close()
 

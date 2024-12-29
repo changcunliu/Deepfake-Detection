@@ -1,10 +1,7 @@
-# Copyright@SCLBD
-# This Dockerfile aims to build the base image for Deepfakbench.
 FROM pytorch/pytorch:1.12.0-cuda11.3-cudnn8-devel
 
 LABEL maintainer="Deepfake"
 
-# Install dependencies outside of the base image
 RUN DEBIAN_FRONTEND=noninteractive apt update && \
 	apt install -y --no-install-recommends automake \
     build-essential  \
@@ -26,7 +23,6 @@ RUN DEBIAN_FRONTEND=noninteractive apt update && \
 
 WORKDIR /
 
-# Install Python dependencies
 RUN pip install --no-cache-dir certifi setuptools \
     && \
     pip --no-cache-dir install dlib==19.24.0\
@@ -56,5 +52,4 @@ RUN pip install --no-cache-dir certifi setuptools \
 
 ENV MODEL_NAME=deepfakebench
 
-# Expose port
 EXPOSE 6000

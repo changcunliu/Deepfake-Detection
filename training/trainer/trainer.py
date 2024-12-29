@@ -1,7 +1,3 @@
-# author: Zhiyuan Yan
-# email: zhiyuanyan@link.cuhk.edu.cn
-# date: 2023-03-30
-# description: trainer
 import os
 import sys
 current_file_path = os.path.abspath(__file__)
@@ -47,7 +43,6 @@ class Trainer(object):
         time_now = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S'),
         swa_model=None
         ):
-        # check if all the necessary components are implemented
         if config is None or model is None or optimizer is None or logger is None:
             raise ValueError("config, model, optimizier, logger, and tensorboard writer must be implemented")
 
@@ -56,19 +51,15 @@ class Trainer(object):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.swa_model = swa_model
-        self.writers = {}  # dict to maintain different tensorboard writers for each dataset and metric
+        self.writers = {} 
         self.logger = logger
         self.metric_scoring = metric_scoring
-        # maintain the best metric of all epochs
         self.best_metrics_all_time = defaultdict(
             lambda: defaultdict(lambda: float('-inf')
             if self.metric_scoring != 'eer' else float('inf'))
         )
-        self.speed_up()  # move model to GPU
-
-        # get current time
+        self.speed_up()  
         self.timenow = time_now
-        # create directory path
         if 'task_target' not in config:
             self.log_dir = os.path.join(
                 self.config['log_dir'],
@@ -85,7 +76,6 @@ class Trainer(object):
     def get_writer(self, phase, dataset_key, metric_key):
         writer_key = f"{phase}-{dataset_key}-{metric_key}"
         if writer_key not in self.writers:
-            # update directory path
             writer_path = os.path.join(
                 self.log_dir,
                 phase,
@@ -94,7 +84,6 @@ class Trainer(object):
                 "metric_board"
             )
             os.makedirs(writer_path, exist_ok=True)
-            # update writers dictionary
             self.writers[writer_key] = SummaryWriter(writer_path)
         return self.writers[writer_key]
 
@@ -105,9 +94,7 @@ class Trainer(object):
         if self.config['ddp'] == True:
             num_gpus = torch.cuda.device_count()
             print(f'avai gpus: {num_gpus}')
-            # local_rank=[i for i in range(0,num_gpus)]
             self.model = DDP(self.model, device_ids=[self.config['local_rank']],find_unused_parameters=True, output_device=self.config['local_rank'])
-            #self.optimizer =  nn.DataParallel(self.optimizer, device_ids=[int(os.environ['LOCAL_RANK'])])
 
     def setTrain(self):
         self.model.train()
@@ -223,52 +210,38 @@ class Trainer(object):
         else:
             times_per_epoch = 1
 
-
-        #times_per_epoch=4
-
-        test_step = len(train_data_loader) // times_per_epoch    # test 10 times per epoch
+        test_step = len(train_data_loader) // times_per_epoch   
         step_cnt = epoch * len(train_data_loader)
 
-        # save the training data_dict
         data_dict = train_data_loader.dataset.data_dict
         self.save_data_dict('train', data_dict, ','.join(self.config['train_dataset']))
-        # define training recorder
         train_recorder_loss = defaultdict(Recorder)
         train_recorder_metric = defaultdict(Recorder)
 
         for iteration, data_dict in tqdm(enumerate(train_data_loader),total=len(train_data_loader)):
             self.setTrain()
-            # more elegant and more scalable way of moving data to GPU
             for key in data_dict.keys():
                 if data_dict[key]!=None and key!='name':
                     data_dict[key]=data_dict[key].cuda()
 
             losses,predictions=self.train_step(data_dict)
 
-            # update learning rate
-
             if 'SWA' in self.config and self.config['SWA'] and epoch>self.config['swa_start']:
                 self.swa_model.update_parameters(self.model)
 
-            # compute training metric for each batch data
             if type(self.model) is DDP:
                 batch_metrics = self.model.module.get_train_metrics(data_dict, predictions)
             else:
                 batch_metrics = self.model.get_train_metrics(data_dict, predictions)
 
-            # store data by recorder
-            ## store metric
             for name, value in batch_metrics.items():
                 train_recorder_metric[name].update(value)
-            ## store loss
             for name, value in losses.items():
                 train_recorder_loss[name].update(value)
 
-            # run tensorboard to visualize the training process
             if iteration % 300 == 0 and self.config['local_rank']==0:
                 if self.config['SWA'] and (epoch>self.config['swa_start'] or self.config['dry_run']):
                     self.scheduler.step()
-                # info for loss
                 loss_str = f"Iter: {step_cnt}    "
                 for k, v in train_recorder_loss.items():
                     v_avg = v.average()
@@ -276,11 +249,9 @@ class Trainer(object):
                         loss_str += f"training-loss, {k}: not calculated"
                         continue
                     loss_str += f"training-loss, {k}: {v_avg}    "
-                    # tensorboard-1. loss
                     writer = self.get_writer('train', ','.join(self.config['train_dataset']), k)
                     writer.add_scalar(f'train_loss/{k}', v_avg, global_step=step_cnt)
                 self.logger.info(loss_str)
-                # info for metric
                 metric_str = f"Iter: {step_cnt}    "
                 for k, v in train_recorder_metric.items():
                     v_avg = v.average()
@@ -288,21 +259,15 @@ class Trainer(object):
                         metric_str += f"training-metric, {k}: not calculated    "
                         continue
                     metric_str += f"training-metric, {k}: {v_avg}    "
-                    # tensorboard-2. metric
                     writer = self.get_writer('train', ','.join(self.config['train_dataset']), k)
                     writer.add_scalar(f'train_metric/{k}', v_avg, global_step=step_cnt)
                 self.logger.info(metric_str)
 
-
-
-                # clear recorder.
-                # Note we only consider the current 300 samples for computing batch-level loss/metric
-                for name, recorder in train_recorder_loss.items():  # clear loss recorder
+                for name, recorder in train_recorder_loss.items():
                     recorder.clear()
-                for name, recorder in train_recorder_metric.items():  # clear metric recorder
+                for name, recorder in train_recorder_metric.items():  
                     recorder.clear()
 
-            # run test
             if (step_cnt+1) % test_step == 0:
                 if test_data_loaders is not None and (not self.config['ddp'] ):
                     self.logger.info("===> Test start!")
@@ -323,9 +288,6 @@ class Trainer(object):
                 else:
                     test_best_metric = None
 
-                    # total_end_time = time.time()
-            # total_elapsed_time = total_end_time - total_start_time
-            # print("总花费的时间: {:.2f} 秒".format(total_elapsed_time))
             step_cnt += 1
         return test_best_metric
 
@@ -338,33 +300,26 @@ class Trainer(object):
         return acc_real,acc_fake
 
     def test_one_dataset(self, data_loader):
-        # define test recorder
         test_recorder_loss = defaultdict(Recorder)
         prediction_lists = []
         feature_lists=[]
         label_lists = []
         for i, data_dict in tqdm(enumerate(data_loader),total=len(data_loader)):
-            # get data
             if 'label_spe' in data_dict:
-                data_dict.pop('label_spe')  # remove the specific label
-            data_dict['label'] = torch.where(data_dict['label']!=0, 1, 0)  # fix the label to 0 and 1 only
-            # move data to GPU elegantly
+                data_dict.pop('label_spe') 
+            data_dict['label'] = torch.where(data_dict['label']!=0, 1, 0) 
             for key in data_dict.keys():
                 if data_dict[key]!=None:
                     data_dict[key]=data_dict[key].cuda()
-            # model forward without considering gradient computation
             predictions = self.inference(data_dict)
             label_lists += list(data_dict['label'].cpu().detach().numpy())
             prediction_lists += list(predictions['prob'].cpu().detach().numpy())
             feature_lists += list(predictions['feat'].cpu().detach().numpy())
             if type(self.model) is not AveragedModel:
-                # compute all losses for each batch data
                 if type(self.model) is DDP:
                     losses = self.model.module.get_losses(data_dict, predictions)
                 else:
                     losses = self.model.get_losses(data_dict, predictions)
-
-                # store data by recorder
                 for name, value in losses.items():
                     test_recorder_loss[name].update(value)
 
@@ -374,20 +329,16 @@ class Trainer(object):
         best_metric = self.best_metrics_all_time[key].get(self.metric_scoring,
                                                           float('-inf') if self.metric_scoring != 'eer' else float(
                                                               'inf'))
-        # Check if the current score is an improvement
         improved = (metric_one_dataset[self.metric_scoring] > best_metric) if self.metric_scoring != 'eer' else (
                     metric_one_dataset[self.metric_scoring] < best_metric)
         if improved:
-            # Update the best metric
             self.best_metrics_all_time[key][self.metric_scoring] = metric_one_dataset[self.metric_scoring]
             if key == 'avg':
                 self.best_metrics_all_time[key]['dataset_dict'] = metric_one_dataset['dataset_dict']
-            # Save checkpoint, feature, and metrics if specified in config
             if self.config['save_ckpt'] and key not in FFpp_pool:
                 self.save_ckpt('test', key, f"{epoch}+{iteration}")
             self.save_metrics('test', metric_one_dataset, key)
         if losses_one_dataset_recorder is not None:
-            # info for each dataset
             loss_str = f"dataset: {key}    step: {step}    "
             for k, v in losses_one_dataset_recorder.items():
                 writer = self.get_writer('test', key, k)
@@ -395,17 +346,14 @@ class Trainer(object):
                 if v_avg == None:
                     print(f'{k} is not calculated')
                     continue
-                # tensorboard-1. loss
                 writer.add_scalar(f'test_losses/{k}', v_avg, global_step=step)
                 loss_str += f"testing-loss, {k}: {v_avg}    "
             self.logger.info(loss_str)
-        # tqdm.write(loss_str)
         metric_str = f"dataset: {key}    step: {step}    "
         for k, v in metric_one_dataset.items():
             if k == 'pred' or k == 'label' or k=='dataset_dict':
                 continue
             metric_str += f"testing-metric, {k}: {v}    "
-            # tensorboard-2. metric
             writer = self.get_writer('test', key, k)
             writer.add_scalar(f'test_metrics/{k}', v, global_step=step)
         if 'pred' in metric_one_dataset:
@@ -415,24 +363,16 @@ class Trainer(object):
             writer.add_scalar(f'test_metrics/acc_fake', acc_fake, global_step=step)
         self.logger.info(metric_str)
     def test_epoch(self, epoch, iteration, test_data_loaders, step):
-        # set model to eval mode
         self.setEval()
-
-        # define test recorder
         losses_all_datasets = {}
         metrics_all_datasets = {}
-        best_metrics_per_dataset = defaultdict(dict)  # best metric for each dataset, for each metric
+        best_metrics_per_dataset = defaultdict(dict) 
         avg_metric = {'acc': 0, 'auc': 0, 'eer': 0, 'ap': 0,'video_auc': 0,'dataset_dict':{}}
-        # testing for all test data
         keys = test_data_loaders.keys()
         for key in keys:
-            # save the testing data_dict
             data_dict = test_data_loaders[key].dataset.data_dict
             self.save_data_dict('test', data_dict, key)
-
-            # compute loss for each dataset
             losses_one_dataset_recorder, predictions_nps, label_nps, feature_nps = self.test_one_dataset(test_data_loaders[key])
-            # print(f'stack len:{predictions_nps.shape};{label_nps.shape};{len(data_dict["image"])}')
             losses_all_datasets[key] = losses_one_dataset_recorder
             metric_one_dataset=get_test_metrics(y_pred=predictions_nps,y_true=label_nps,img_names=data_dict['image'])
             for metric_name, value in metric_one_dataset.items():
@@ -448,14 +388,13 @@ class Trainer(object):
             self.save_best(epoch,iteration,step,losses_one_dataset_recorder,key,metric_one_dataset)
 
         if len(keys)>0 and self.config.get('save_avg',False):
-            # calculate avg value
             for key in avg_metric:
                 if key != 'dataset_dict':
                     avg_metric[key] /= len(keys)
             self.save_best(epoch, iteration, step, None, 'avg', avg_metric)
 
         self.logger.info('===> Test Done!')
-        return self.best_metrics_all_time  # return all types of mean metrics for determining the best ckpt
+        return self.best_metrics_all_time 
 
     @torch.no_grad()
     def inference(self, data_dict):

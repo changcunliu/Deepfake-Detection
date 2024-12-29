@@ -50,4 +50,8 @@ python3 training/test.py \
 --detector_path ./training/config/detector/.yaml \
 --test_dataset "FF++" \
 --weights_path ./training/weights/ .pth
+<<<<<<< HEAD
 ```
+=======
+```
+>>>>>>> c26fe80 (	modified:   Dockerfile)
