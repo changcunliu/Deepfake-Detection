@@ -17,20 +17,16 @@ Then, you should go to the `./training/config/detector/` folder and then Choose 
 After setting the parameters, you can run with the following to train the Xception detector:
 
 ```
-python training/train.py \
---detector_path ./training/config/detector/xception.yaml
+python training/train.py --detector_path 
 ```
 
 You can also adjust the training and testing datasets using the command line, for example:
 
 ```
-python training/train.py \
---detector_path ./training/config/detector/xception.yaml  \
---train_dataset "FF++" \
---test_dataset "Celeb-DF-v1" "Celeb-DF-v2"
+python training/train.py --detector_path   --train_dataset "FaceForensics++" --test_dataset "Celeb-DF-v1"
 ```
 
-By default, the checkpoints and features will be saved during the training process. If you do not want to save them, run with the following:
+By default, the checkpoints and features will be saved during the training process. If you do not want to save them, run with the following, for example:
 
 ```
 python training/train.py --detector_path ./training/config/detector/xception.yaml --train_dataset "FaceForensics++" --test_dataset "Celeb-DF-v1" --no-save_ckpt --no-save_feat
