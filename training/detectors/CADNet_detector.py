@@ -38,7 +38,7 @@ def denormalize(tensor, mean, std):
         return tensor * std + mean
     
 @DETECTOR.register_module(module_name='ucf')
-class UCFDetector(AbstractDetector):
+class CADNetDetector(AbstractDetector):
     def __init__(self, config):
         super().__init__()
         self.config = config
