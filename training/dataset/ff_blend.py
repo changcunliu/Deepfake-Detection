@@ -1,11 +1,3 @@
-'''
-# author: Zhiyuan Yan
-# email: zhiyuanyan@link.cuhk.edu.cn
-# date: 2023-03-30
-
-The code is designed for Face X-ray.
-'''
-
 import os
 import sys
 import json

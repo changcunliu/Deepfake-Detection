@@ -33,12 +33,7 @@ python training/train.py \
 By default, the checkpoints and features will be saved during the training process. If you do not want to save them, run with the following:
 
 ```
-python training/train.py \
---detector_path ./training/config/detector/xception.yaml \
---train_dataset "FF++" \
---test_dataset "Celeb-DF-v1" \
---no-save_ckpt \
---no-save_feat
+python training/train.py --detector_path ./training/config/detector/xception.yaml --train_dataset "FaceForensics++" --test_dataset "Celeb-DF-v1" --no-save_ckpt --no-save_feat
 ```
 
 ### Test
@@ -46,7 +41,4 @@ python training/train.py \
 If you want to produce the results, you can use the the [`test.py`](./training/test.py) code for evaluation. Here is an example:
 
 ```
-python3 training/test.py \
---detector_path ./training/config/detector/.yaml \
---test_dataset "FF++" \
---weights_path ./training/weights/ .pth
+python3 training/test.py --detector_path /home/changcun/myself/DeepfakeBench/training/config/detector/ucf.yaml --test_dataset "Celeb-DF-v2" --weights_path /scratch/changcun/dataset/DeepfakeBench/logs/training/ucf_2024-11-30-19-54-50/test/avg/ckpt_best.pth

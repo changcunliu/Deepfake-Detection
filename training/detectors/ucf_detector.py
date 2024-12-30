@@ -81,7 +81,7 @@ class UCFDetector(AbstractDetector):
             out_f=self.half_fingerprint_dim
         )
 
-        self.EffConv = PConv(dim=256, n_div=4)
+        self.EffConv = EffConv(dim=256, n_div=4)
         self.csc = CSC(dim=512)
         self.fdd = FDD(256,256)
         self.i = 0
@@ -215,6 +215,7 @@ class UCFDetector(AbstractDetector):
     
 
     def forward(self, data_dict: dict, inference=False) -> dict:
+        original_images = denormalize(data_dict['image'], mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         original_images = torch.clamp(original_images, 0, 1)
 
         features = self.features(data_dict)

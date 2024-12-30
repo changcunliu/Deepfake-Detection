@@ -3,7 +3,6 @@ log_dir: /home/changcun/my/DeepfakeBench/logs/debug_logs/ucf
 
 # model setting
 pretrained: /home/changcun/my/DeepfakeBench/training/pretrained/xception-b5690688.pth   # path to a pre-trained model, if using one
-# pretrained: '/home/zhiyuanyan/.cache/torch/hub/checkpoints/resnet34-b627a593.pth'   # path to a pre-trained model, if using one
 model_name: ucf   # model name
 backbone_name: xception  # backbone name
 encoder_feat_dim: 512  # feature dimension of the backbone
