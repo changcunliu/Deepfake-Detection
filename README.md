@@ -38,20 +38,27 @@ If you want to produce the results, you can use the the [`test.py`](./training/t
 
 ```
 python3 training/test.py --detector_path /home/changcun/myself/DeepfakeBench/training/config/detector/ucf.yaml --test_dataset "Celeb-DF-v2" --weights_path /scratch/changcun/dataset/DeepfakeBench/logs/training/ucf_2024-11-30-19-54-50/test/avg/ckpt_best.pth
+```
+
 
 ### Datasets split ratios
 
 For intra-dataset validation, FF++ [30] dataset serves as the training dataset, while FF++ dataset and its four subsets are used as testing datasets. The explicit ratios are shown in：
-dataset	Training samples	Testing samples	Training ratio	Testing ratio
-FF++	3596	700	83.71%	16.29%
-DF	1438	280	83.70%	16.30%
-F2F	1438	280	83.70%	16.30%
-FS	1439	280	83.71%	16.29%
-NT	1438	280	83.70%	16.30%
+
+| dataset       | Training samples | Testing samples | Training ratio | Testing ratio |
+|:-------------|:---------------:|:---------------:|:--------------:|--------------:|
+| FF++         | 3596            | 700             | 83.71%         | 16.29%        |
+| DF           | 1438            | 280             | 83.70%         | 16.30%        |
+| F2F          | 1438            | 280             | 83.70%         | 16.30%        |
+| FS           | 1439            | 280             | 83.71%         | 16.29%        |
+| NT           | 1438            | 280             | 83.70%         | 16.30%        |
+
+
 For cross-dataset validation, FF++ dataset serves as the training dataset, with Celeb-DF-v1[31], Celeb-DF-v2[31], DFDCP [32], and FaceShifter [33] datasets as testing datasets. The slash expresses that it was not used in the cross-dataset validation. The explicit ratios are shown in：
-dataset	Training samples	Testing samples	Training ratio	Testing ratio
-FF++	3596	700	83.71%	
-Celeb-DF-v1	33308	3136		8.60%
-Celeb-DF-v2	189301	16420		7.98%
-DFDCP	822	230		21.86%
-FaceShifter	1438	280		16.30%
+| dataset       | Training samples | Testing samples | Training ratio | Testing ratio |
+|:-------------|:---------------:|:---------------:|:--------------:|--------------:|
+| FF++         | 3596            | 700             | 83.71%         | ——            |
+| Celeb-DF-v1  | 33308           | 3136            | ——             | 8.60%         |
+| Celeb-DF-v2  | 189301          | 16420           | ——             | 7.98%         |
+| DFDCP        | 822             | 230             | ——             | 21.86%        |
+| FaceShifter  | 1438            | 280             | ——             | 16.30%        |
