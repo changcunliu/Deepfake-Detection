@@ -32,6 +32,8 @@ By default, the checkpoints and features will be saved during the training proce
 python training/train.py --detector_path ./training/config/detector/xception.yaml --train_dataset "FaceForensics++" --test_dataset "Celeb-DF-v1" --no-save_ckpt --no-save_feat
 ```
 
+The training process conducted on an NVIDIA GeForce RTX 3090 Ti GPU, the peak memory consumption reached 14480 MB, and the total training duration was 4 hours. The model contains 48.28M trainable parameters and requires 204.97G FLOPs.  
+
 ### Test
 
 If you want to produce the results, you can use the the [`test.py`](./training/test.py) code for evaluation. Here is an example:
@@ -40,7 +42,9 @@ If you want to produce the results, you can use the the [`test.py`](./training/t
 python3 training/test.py --detector_path /home/changcun/myself/DeepfakeBench/training/config/detector/ucf.yaml --test_dataset "Celeb-DF-v2" --weights_path /scratch/changcun/dataset/DeepfakeBench/logs/training/ucf_2024-11-30-19-54-50/test/avg/ckpt_best.pth
 ```
 
-
+For inference, the test execution memory usage is 3,398 MB, and the per-image inference time is 74.29ms. 
+We calculate the per-image inference time using the inference usage time and the number of pictures to be inferred.
+The average latency is 5.16ms, the standard deviation of latency is 1.54ms, the minimum latency is 4.56ms, and the maximum latency is 11.04ms. 
 ### Datasets split ratios
 
 For intra-dataset validation, FF++ [30] dataset serves as the training dataset, while FF++ dataset and its four subsets are used as testing datasets. The explicit ratios are shown in：
